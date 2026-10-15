@@ -118,7 +118,9 @@ df = df.rename(columns={
 })
 
 # Ensure required columns exist
-df = df[["District", "Original_Constituency", "Closest_Match", "Nursery", "Ownership", "Area", "Game", "Lat", "Long"]]
+if "Coordinate_Fix" not in df.columns:
+    df["Coordinate_Fix"] = None
+df = df[["District", "Original_Constituency", "Closest_Match", "Nursery", "Ownership", "Area", "Game", "Lat", "Long", "Coordinate_Fix"]]
 
 # Convert Lat/Long to numeric and drop invalid rows
 df["Latitude"] = pd.to_numeric(df["Lat"], errors="coerce")
@@ -197,15 +199,19 @@ def create_map(df_filtered, gdf_full):
     for _, row in df_filtered.iterrows():
         sport = row["Game"]
         icon_name = sport_icons.get(sport, "info-sign")
+        fix_note = row["Coordinate_Fix"] if isinstance(row["Coordinate_Fix"], str) else ""
+        approximate = fix_note.startswith("Approximate")
         folium.Marker(
             location=[row["Latitude"], row["Longitude"]],
-            popup=(
+            popup=folium.Popup(
                 f"<b>{row['Nursery']}</b><br>"
                 f"{row['Game']}<br>"
                 f"{row['Ownership']}<br>"
                 f"Area: {row['Area']}"
+                + (f"<br><i style='color:#b45309'>Location corrected: {fix_note}</i>" if fix_note else ""),
+                max_width=300,
             ),
-            icon=folium.Icon(color="blue", icon=icon_name, prefix="fa")
+            icon=folium.Icon(color="orange" if approximate else "blue", icon=icon_name, prefix="fa")
         ).add_to(marker_cluster)
 
     return m
@@ -228,6 +234,11 @@ def legend_html(breaks, colors, fmt):
         for i, (lo, c) in enumerate(zip(breaks, colors))
     )
     return f'<div style="font-size:0.8rem;line-height:1.5">{rows}</div>'
+
+st.sidebar.caption(
+    "Blue markers: facility location as recorded. Orange markers: approximate location "
+    "(the original coordinates were invalid or missing; click a marker for details)."
+)
 
 with st.sidebar.expander("Population layers", expanded=False):
     st.caption(
