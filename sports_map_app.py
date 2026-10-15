@@ -5,8 +5,7 @@ import geopandas as gpd
 import folium
 from streamlit_folium import folium_static
 from folium.plugins import MarkerCluster
-import fiona
-from shapely.geometry import shape, MultiPolygon
+from shapely.geometry import MultiPolygon
 
 # Set Streamlit page layout
 st.set_page_config(layout="wide")
@@ -27,18 +26,17 @@ shapefile_path = "Punjab_Legislative_Constituency.shp"
 
 # --- Load Constituency Polygons from Shapefile ---
 features = []
-with fiona.open(shapefile_path) as shapefile:
-    for feature in shapefile:
-        geom = shape(feature["geometry"])
-        if isinstance(geom, MultiPolygon):
-            geom = max(geom.geoms, key=lambda g: g.area)
-        centroid = geom.centroid
-        features.append({
-            "AC_NAME": feature["properties"]["AC_NAME"],
-            "centroid_x": centroid.x,
-            "centroid_y": centroid.y,
-            "geometry": geom
-        })
+for _, feature in gpd.read_file(shapefile_path).iterrows():
+    geom = feature.geometry
+    if isinstance(geom, MultiPolygon):
+        geom = max(geom.geoms, key=lambda g: g.area)
+    centroid = geom.centroid
+    features.append({
+        "AC_NAME": feature["AC_NAME"],
+        "centroid_x": centroid.x,
+        "centroid_y": centroid.y,
+        "geometry": geom
+    })
 gdf = gpd.GeoDataFrame(features, geometry="geometry")
 
 # --- Load and Process the New Excel File ---
