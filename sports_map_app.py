@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
+import json
+import branca.colormap as cm
 import folium
 from streamlit_folium import st_folium
 from folium.plugins import MarkerCluster, Fullscreen
@@ -30,6 +32,9 @@ st.markdown(
 # File paths
 data_file = "Punjab_Sports_Constituency_Data.xlsx"
 shapefile_path = "Punjab_Legislative_Constituency.shp"
+population_file = "Punjab_Constituency_Population.csv"
+density_png = "population_density_2020.png"
+density_meta = json.load(open("population_density_2020.json"))
 
 # --- Load Constituency Polygons from Shapefile ---
 features = []
@@ -39,12 +44,55 @@ for _, feature in gpd.read_file(shapefile_path).iterrows():
         geom = max(geom.geoms, key=lambda g: g.area)
     centroid = geom.centroid
     features.append({
+        "AC_NO": int(feature["AC_NO"]),
         "AC_NAME": feature["AC_NAME"],
         "centroid_x": centroid.x,
         "centroid_y": centroid.y,
         "geometry": geom
     })
-gdf = gpd.GeoDataFrame(features, geometry="geometry")
+gdf = gpd.GeoDataFrame(features, geometry="geometry", crs="EPSG:4326")
+
+# Estimated population per constituency (WorldPop 2020, 1km, UN-adjusted, summed inside each boundary)
+population = pd.read_csv(population_file)
+gdf = gdf.merge(population[["AC_NO", "Population_2020_est", "Area_km2", "Density_per_km2"]], on="AC_NO", how="left")
+
+population_breaks = [0, 150000, 200000, 250000, 300000, 400000, 800000]
+population_colors = ["#f2f0f7", "#dadaeb", "#bcbddc", "#9e9ac8", "#756bb1", "#54278f"]
+population_colormap = cm.StepColormap(
+    population_colors,
+    index=population_breaks, vmin=0, vmax=800000,
+)
+
+# --- Population Layers (toggled from the map's layer control) ---
+def add_population_layers(m, gdf_full):
+    folium.raster_layers.ImageOverlay(
+        image=density_png,
+        bounds=density_meta["bounds"],
+        name="Population density grid (WorldPop 2020)",
+        opacity=0.75,
+        interactive=False,
+        show=False,
+    ).add_to(m)
+
+    layer_data = gdf_full[["AC_NAME", "Population_2020_est", "Area_km2", "Density_per_km2", "geometry"]].copy()
+    layer_data["Population"] = layer_data["Population_2020_est"].map("{:,.0f}".format)
+    layer_data["Density"] = layer_data["Density_per_km2"].map("{:,.0f} / km²".format)
+    layer_data["Area"] = layer_data["Area_km2"].map("{:,.1f} km²".format)
+    folium.GeoJson(
+        layer_data.drop(columns=["Area_km2", "Density_per_km2"]),
+        name="Estimated population by constituency",
+        show=False,
+        style_function=lambda feature: {
+            "fillColor": population_colormap(feature["properties"]["Population_2020_est"]),
+            "color": "#ffffff",
+            "weight": 0.5,
+            "fillOpacity": 0.7,
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=["AC_NAME", "Population", "Area", "Density"],
+            aliases=["Constituency", "Population (est. 2020)", "Area", "Density"],
+        ),
+    ).add_to(m)
 
 # --- Load and Process the New Excel File ---
 df = pd.read_excel(data_file)
@@ -94,6 +142,7 @@ def create_map(df_filtered, gdf_full):
             overlay=False,
             control=True
         ).add_to(m)
+        add_population_layers(m, gdf_full)
         return m
 
     if len(gdf_filtered) == 1:
@@ -113,7 +162,9 @@ def create_map(df_filtered, gdf_full):
         overlay=False,
         control=True
     ).add_to(m)
+    add_population_layers(m, gdf_full)
 
+    boundaries = folium.FeatureGroup(name="Constituency boundaries").add_to(m)
     for _, row in gdf_filtered.iterrows():
         folium.GeoJson(
             row["geometry"],
@@ -124,7 +175,7 @@ def create_map(df_filtered, gdf_full):
                 "weight": 1,
                 "fillOpacity": 0.5
             }
-        ).add_to(m)
+        ).add_to(boundaries)
 
     if len(gdf_filtered) == 1:
         folium.Marker(
@@ -142,7 +193,7 @@ def create_map(df_filtered, gdf_full):
         'Hockey': 'hockey-puck',
     }
 
-    marker_cluster = MarkerCluster().add_to(m)
+    marker_cluster = MarkerCluster(name="Sports facilities").add_to(m)
     for _, row in df_filtered.iterrows():
         sport = row["Game"]
         icon_name = sport_icons.get(sport, "info-sign")
@@ -170,6 +221,29 @@ all_constituencies = sorted(df["Closest_Match"].unique())
 selected_constituency = st.sidebar.selectbox("Select Constituency", ["All"] + all_constituencies)
 selected_sport = st.sidebar.selectbox("Select Sport", ["All"] + all_sports)
 
+def legend_html(breaks, colors, fmt):
+    rows = "".join(
+        f'<div><span style="display:inline-block;width:14px;height:12px;background:{c};margin-right:6px;'
+        f'border:1px solid #999"></span>{fmt(lo)}{"+" if i == len(colors) - 1 else " – " + fmt(breaks[i + 1])}</div>'
+        for i, (lo, c) in enumerate(zip(breaks, colors))
+    )
+    return f'<div style="font-size:0.8rem;line-height:1.5">{rows}</div>'
+
+with st.sidebar.expander("Population layers", expanded=False):
+    st.caption(
+        "Turn these on from the layers button at the top right of the map. "
+        "Source: WorldPop 2020, 1 km grid, UN-adjusted (worldpop.org)."
+    )
+    st.markdown("**Estimated population by constituency**")
+    st.markdown(legend_html(population_breaks, population_colors, lambda v: f"{v / 1000:,.0f}k"), unsafe_allow_html=True)
+    st.markdown("**Population density grid** (people per ~1 km² cell)")
+    st.markdown(legend_html(density_meta["breaks"], density_meta["colors"], lambda v: f"{v:,}"), unsafe_allow_html=True)
+    st.caption(
+        "Constituency figures are estimates: the 1 km grid is summed inside each boundary, and some "
+        "urban boundaries in the shapefile are offset from the city centres, so city seats may be "
+        "undercounted and their neighbours overcounted. The density grid does not depend on the boundaries."
+    )
+
 df_filtered = df.copy()
 if selected_constituency != "All":
     df_filtered = df_filtered[df_filtered["Closest_Match"] == selected_constituency]
@@ -178,4 +252,5 @@ if selected_sport != "All":
 
 m = create_map(df_filtered, gdf)
 Fullscreen(position="topleft").add_to(m)
+folium.LayerControl(collapsed=True).add_to(m)
 st_folium(m, use_container_width=True, height=800, returned_objects=[])
