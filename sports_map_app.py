@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 import folium
-from streamlit_folium import folium_static
-from folium.plugins import MarkerCluster
+from streamlit_folium import st_folium
+from folium.plugins import MarkerCluster, Fullscreen
 from shapely.geometry import MultiPolygon
 
 # Set Streamlit page layout
@@ -13,8 +13,15 @@ st.set_page_config(layout="wide")
 st.markdown(
     '''
     <style>
-    .css-18e3th9 { padding-top: 0rem !important; padding-bottom: 0rem !important; }
-    .css-1outpf7 { padding: 0rem !important; margin: 0rem !important; }
+    /* Let the map fill the whole main area */
+    [data-testid="stMainBlockContainer"], .block-container {
+        padding: 3rem 0.5rem 0rem 0.5rem !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stCustomComponentV1"], iframe[title="streamlit_folium.st_folium"] {
+        width: 100% !important;
+        height: calc(100vh - 4.5rem) !important;
+    }
     </style>
     ''',
     unsafe_allow_html=True
@@ -79,7 +86,7 @@ def create_map(df_filtered, gdf_full):
     gdf_filtered = gdf_full[gdf_full["AC_NAME"].isin(unique_const)].copy()
 
     if len(gdf_filtered) == 0:
-        m = folium.Map(location=punjab_center, zoom_start=8, width="100%", height="90vh")
+        m = folium.Map(location=punjab_center, zoom_start=8, width="100%", height="100%")
         folium.TileLayer(
             tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
             attr="Google Hybrid",
@@ -98,7 +105,7 @@ def create_map(df_filtered, gdf_full):
         center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
         zoom = 8
 
-    m = folium.Map(location=center, zoom_start=zoom, width="100%", height="90vh")
+    m = folium.Map(location=center, zoom_start=zoom, width="100%", height="100%")
     folium.TileLayer(
         tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
         attr="Google Hybrid",
@@ -170,4 +177,5 @@ if selected_sport != "All":
     df_filtered = df_filtered[df_filtered["Game"] == selected_sport]
 
 m = create_map(df_filtered, gdf)
-folium_static(m)
+Fullscreen(position="topleft").add_to(m)
+st_folium(m, use_container_width=True, height=800, returned_objects=[])
